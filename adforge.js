@@ -72,7 +72,7 @@ function mountConnect(target, opts = {}) {
     }
   };
   document.addEventListener("click", onDocClick);
-  function el(tag, cls, text) {
+  function el2(tag, cls, text) {
     const n = document.createElement(tag);
     if (cls)
       n.className = cls;
@@ -162,15 +162,15 @@ function mountConnect(target, opts = {}) {
     if (state2.kind === "booting")
       return;
     if (state2.kind === "not-installed") {
-      const b = el("button", "btn get");
-      b.append(el("span", "glyph"), el("span", void 0, "Get Switchboard"), el("span", "arr", "\u2197"));
+      const b = el2("button", "btn get");
+      b.append(el2("span", "glyph"), el2("span", void 0, "Get Switchboard"), el2("span", "arr", "\u2197"));
       b.onclick = () => window.open(state2.kind === "not-installed" ? state2.installUrl : installUrl, "_blank", "noopener");
       mount.append(b);
       return;
     }
     if (state2.kind === "disconnected") {
-      const b = el("button", "btn connect");
-      b.append(el("span", "glyph"), el("span", void 0, "Connect Switchboard"));
+      const b = el2("button", "btn connect");
+      b.append(el2("span", "glyph"), el2("span", void 0, "Connect Switchboard"));
       b.onclick = doConnect;
       mount.append(b);
       return;
@@ -179,20 +179,20 @@ function mountConnect(target, opts = {}) {
     const rawName = user?.name?.trim();
     const collides = !!rawName && !!project?.name && rawName.toLowerCase() === project.name.toLowerCase();
     const name = !rawName || collides ? "there" : rawName;
-    const wrap = el("div", "wrap");
-    const chip = el("button", "chip");
-    const av = el("div", "av");
+    const wrap = el2("div", "wrap");
+    const chip = el2("button", "chip");
+    const av = el2("div", "av");
     if (user?.avatar) {
-      const img = el("img");
+      const img = el2("img");
       img.src = user.avatar;
       img.alt = name;
       av.append(img);
     } else
       av.textContent = name.charAt(0).toUpperCase();
-    const who = el("div", "who");
-    who.append(el("div", "hi", `Hi ${name}`));
-    who.append(el("div", "proj", project ? project.name : "No context lent"));
-    chip.append(av, who, el("span", "caret", "\u25BE"));
+    const who = el2("div", "who");
+    who.append(el2("div", "hi", `Hi ${name}`));
+    who.append(el2("div", "proj", project ? project.name : "No context lent"));
+    chip.append(av, who, el2("span", "caret", "\u25BE"));
     chip.onclick = (e) => {
       e.stopPropagation();
       menuOpen = !menuOpen;
@@ -200,17 +200,17 @@ function mountConnect(target, opts = {}) {
     };
     wrap.append(chip);
     if (menuOpen) {
-      const menu = el("div", "menu");
-      menu.append(el("div", "lbl", "Working on"));
-      const row = el("button", "proj-row");
-      row.append(el("span", void 0, project ? project.name : "Choose a context"));
-      row.append(el("span", "go", project ? "Switch \u25B8" : "Choose \u25B8"));
+      const menu = el2("div", "menu");
+      menu.append(el2("div", "lbl", "Working on"));
+      const row = el2("button", "proj-row");
+      row.append(el2("span", void 0, project ? project.name : "Choose a context"));
+      row.append(el2("span", "go", project ? "Switch \u25B8" : "Choose \u25B8"));
       row.onclick = doPick;
-      menu.append(row, el("div", "sep"));
-      const dc = el("button", "item", "Disconnect this app");
+      menu.append(row, el2("div", "sep"));
+      const dc = el2("button", "item", "Disconnect this app");
       dc.onclick = doDisconnect;
       menu.append(dc);
-      menu.append(el("div", "foot", "Connectors, budgets & activity live in the Switchboard toolbar panel."));
+      menu.append(el2("div", "foot", "Connectors, budgets & activity live in the Switchboard toolbar panel."));
       wrap.append(menu);
     }
     mount.append(wrap);
@@ -379,25 +379,25 @@ function whenRelayReady(timeoutMs = 3e3, opts) {
 var $ = (id) => document.getElementById(id);
 var INSTALL_URL = "https://thelastprompt.ai/switchboard/";
 var STORE_KEY = "adforge:state";
-var ANGLES = ["UGC hook", "Problem \u2192 agitate \u2192 solve", "Founder story", "Offer-led urgency"];
+var SAMPLE_URL = "https://www.allbirds.com";
+var ANGLE_IDEAS = ["UGC hook", "Problem \u2192 agitate \u2192 solve", "Founder story", "Offer-led urgency"];
 var CTAS = ["Shop Now", "Learn More", "Get Offer", "Sign Up"];
-var SITES = [
-  { label: "Allbirds", url: "https://www.allbirds.com" },
-  { label: "Liquid Death", url: "https://liquiddeath.com" },
-  { label: "Notion", url: "https://www.notion.com" },
-  { label: "Ritual", url: "https://ritual.com" },
-  { label: "Warby Parker", url: "https://www.warbyparker.com" }
-];
 var URL_RE = /(https?:\/\/[^\s"')]+\.(?:png|jpe?g|webp))|"(?:rawUrl|url|minUrl)"\s*:\s*"([^"]+)"/i;
 var relay = null;
 var notInstalled = false;
 var forging = false;
 var casting = false;
 var lastAction = null;
+var lent = null;
+var urlRevealed = false;
 var state = {
-  url: "https://www.allbirds.com",
-  angles: ["UGC hook"],
+  url: SAMPLE_URL,
+  steer: "",
+  // the one optional knob — a free-text angle steer
+  source: "url",
+  // "brand" (lent context) | "url" — what the current concepts came from
   brand: null,
+  // {name, product, tone, audience, colors} the concepts were forged from
   concepts: [],
   picked: -1,
   aspect: "1:1",
@@ -405,11 +405,11 @@ var state = {
   // real generated URLs, keyed "1:1" / "4:5" — reset on new pick
   sample: false,
   siteCache: null,
-  // WebFetch result text, so "Regenerate copy" skips the re-read
+  // WebFetch result text, so "Regenerate" skips the re-read
   siteCacheUrl: null
 };
 var SAMPLE = {
-  url: "https://www.allbirds.com",
+  url: SAMPLE_URL,
   brand: {
     name: "Allbirds",
     product: "Merino wool and tree-fiber sneakers with the carbon footprint printed on them",
@@ -456,7 +456,8 @@ function save() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       url: state.url,
-      angles: state.angles,
+      steer: state.steer,
+      source: state.source,
       brand: state.brand,
       concepts: state.concepts,
       picked: state.picked,
@@ -475,15 +476,21 @@ function load() {
     if (s && typeof s === "object") Object.assign(state, s);
   } catch {
   }
-  if (typeof state.url !== "string" || !state.url) state.url = "https://www.allbirds.com";
-  if (!Array.isArray(state.angles)) state.angles = [];
-  state.angles = state.angles.filter((a) => ANGLES.includes(a));
+  if (typeof state.url !== "string" || !state.url) state.url = SAMPLE_URL;
+  if (typeof state.steer !== "string") state.steer = "";
+  if (state.source !== "brand") state.source = "url";
   if (!Array.isArray(state.concepts)) state.concepts = [];
   if (!state.images || typeof state.images !== "object") state.images = {};
   if (state.aspect !== "4:5") state.aspect = "1:1";
   if (!(Number.isInteger(state.picked) && state.picked >= 0 && state.picked < state.concepts.length)) state.picked = -1;
 }
 load();
+var el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
 var str = (v, fb) => typeof v === "string" && v.trim() ? v.trim() : fb;
 var cur = () => state.picked >= 0 ? state.concepts[state.picked] : null;
 var resultText = (d) => (d.result?.content ?? []).map((c) => c.text ?? "").join("");
@@ -514,11 +521,82 @@ function lum(hex) {
   return (0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
 }
 var escXml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+function normalizeBrand(ctx) {
+  const d = ctx && ctx.data || {};
+  const arr = (v) => Array.isArray(v) ? v.filter(Boolean).map(String) : [];
+  const rich = Array.isArray(d.paletteRich) ? d.paletteRich.map((p) => p && (p.hex || p.color || p.value)).filter(Boolean).map(String) : [];
+  const flat = arr(d.palette).length ? arr(d.palette) : rich;
+  return {
+    name: str(ctx && ctx.name, str(d.name, "Brand")),
+    voice: String(d.voice || d.vibe || "").trim(),
+    positioning: String(d.positioning || "").trim(),
+    audience: String(d.audience || "").trim(),
+    palette: flat.map(normHex).filter(Boolean).slice(0, 6),
+    products: arr(d.products).length ? arr(d.products) : arr(d.range)
+  };
+}
+function clearBrandConcepts() {
+  state.brand = null;
+  state.concepts = [];
+  state.picked = -1;
+  state.images = {};
+  save();
+  $("concepts-sec").hidden = true;
+  $("studio-sec").hidden = true;
+}
+function wipeSample() {
+  if (!state.sample) return;
+  state.brand = null;
+  state.concepts = [];
+  state.picked = -1;
+  state.images = {};
+  state.sample = false;
+  save();
+  $("concepts-sec").hidden = true;
+  $("studio-sec").hidden = true;
+}
+async function loadBrandCtx() {
+  if (!relay || !relay.context || typeof relay.context.active !== "function") {
+    lent = null;
+    return;
+  }
+  try {
+    const ctx = await relay.context.active();
+    lent = ctx ? normalizeBrand(ctx) : null;
+  } catch {
+    lent = null;
+  }
+  if (lent && state.sample) wipeSample();
+}
+async function pickBrand(btn) {
+  if (!relay || !relay.context || typeof relay.context.pick !== "function") {
+    showError("This Switchboard build has no context picker \u2014 update the extension.", null);
+    return;
+  }
+  const was = btn.textContent;
+  btn.textContent = "choosing in Switchboard\u2026";
+  btn.disabled = true;
+  try {
+    const ctx = await relay.context.pick();
+    if (ctx) {
+      const next = normalizeBrand(ctx);
+      if (state.source === "brand" && (!lent || next.name !== lent.name)) clearBrandConcepts();
+      lent = next;
+      urlRevealed = false;
+      if (state.sample) wipeSample();
+    }
+  } catch (err) {
+    showError("Brand pick failed: " + (err?.message || err), null);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+    renderEntry();
+    reflect();
+  }
+}
 function logLine(text, cls) {
   $("forgelog").hidden = false;
-  const d = document.createElement("div");
-  d.className = "logline" + (cls ? " " + cls : "");
-  d.textContent = text;
+  const d = el("div", "logline" + (cls ? " " + cls : ""), text);
   $("log").append(d);
   $("log").scrollTop = $("log").scrollHeight;
   return d;
@@ -541,17 +619,33 @@ $("err-retry").addEventListener("click", () => {
 });
 mountConnect($("chip-dock"), {
   scope: {
-    reason: "read your site and forge Meta ads",
+    reason: "forge Meta ads from your lent brand or a site you name",
     tools: ["WebFetch", "mcp__claude_ai_Higgsfield__*"],
     models: ["sonnet"]
   },
   installUrl: INSTALL_URL,
-  onConnect: (r) => {
+  onConnect: async (r) => {
     relay = r;
+    wipeSample();
+    await loadBrandCtx();
+    renderEntry();
     reflect();
   },
   onDisconnect: () => {
     relay = null;
+    lent = null;
+    renderEntry();
+    reflect();
+  },
+  // The chip's own "Switch" menu runs context.pick() itself — without this hook the chip would
+  // show the new brand while the entry card, forge button, and concepts still carried the old
+  // one. Re-read the lent brand and apply the same stale-concept clearing pickBrand does
+  // (persona.js idiom: onProjectChange re-runs the brand load).
+  onProjectChange: async () => {
+    const prev = lent;
+    await loadBrandCtx();
+    if (state.source === "brand" && (prev && prev.name) !== (lent && lent.name)) clearBrandConcepts();
+    renderEntry();
     reflect();
   }
 });
@@ -559,18 +653,50 @@ mountConnect($("chip-dock"), {
   const r = await whenRelayReady(2e3, { installUrl: INSTALL_URL });
   if (r && "connect" in r) {
     const grant = await r.permissions().catch(() => null);
-    if (grant) relay = r;
+    if (grant) {
+      relay = r;
+      wipeSample();
+      await loadBrandCtx();
+    }
   } else {
     notInstalled = true;
   }
+  renderEntry();
   reflect();
 })();
+function renderEntry() {
+  const hasBrand = !!(relay && lent);
+  $("brand-entry").hidden = !hasBrand;
+  $("url-entry").hidden = hasBrand && !urlRevealed;
+  $("use-brand").hidden = hasBrand;
+  $("sample").hidden = !!relay;
+  $("url-toggle").textContent = urlRevealed ? "hide the URL path" : "or forge from a site URL instead";
+  $("url-sample-note").hidden = $("f-url").value.trim() !== SAMPLE_URL;
+  if (hasBrand) {
+    $("b-name").textContent = lent.name;
+    const line = $("b-line");
+    line.textContent = "";
+    const bits = [lent.positioning || lent.voice, lent.audience ? "for " + lent.audience : ""].filter(Boolean).join(" \xB7 ");
+    if (bits) line.append(document.createTextNode(bits + " "));
+    for (const c of lent.palette.slice(0, 4)) {
+      const sw = el("span", "sw");
+      sw.style.background = c;
+      sw.title = c;
+      line.append(sw);
+    }
+  }
+}
 function reflect() {
   const busy = forging || casting;
   const on = !!relay;
   $("forge").disabled = !on || busy;
-  $("forge").textContent = forging ? "FORGING\u2026" : "FORGE CONCEPTS";
-  $("regen-copy").disabled = !on || busy;
+  $("forge").textContent = forging ? "Forging\u2026" : "Forge concepts";
+  $("forge-brand").disabled = !on || busy;
+  $("forge-brand").textContent = forging ? "Forging\u2026" : `Forge ads for ${lent ? lent.name : "your brand"}`;
+  $("use-brand").disabled = !on || busy;
+  $("switch-brand").disabled = busy;
+  $("regen-concepts").disabled = !on || busy;
+  $("regen-copy").disabled = !on || busy || state.picked < 0;
   $("cast").disabled = !on || busy || state.picked < 0;
   $("recast").disabled = !on || busy || state.picked < 0;
   $("asp-11").disabled = busy;
@@ -582,86 +708,86 @@ function reflect() {
     hint.textContent = "runs on your Claude \u2014 the site read and every render are yours";
   } else if (notInstalled) {
     hint.append("Switchboard isn't installed \u2014 ");
-    const a = document.createElement("a");
+    const a = el("a", null, "get it here");
     a.href = INSTALL_URL;
     a.target = "_blank";
     a.rel = "noreferrer";
-    a.textContent = "get it here";
     hint.append(a, " to fire the forge.");
   } else {
-    hint.textContent = "connect Switchboard (top right) to fire the forge \u2014 the form and sample work now";
+    hint.textContent = "connect Switchboard (top right) to forge \u2014 the sample works now";
   }
 }
 $("f-url").value = state.url;
 $("f-url").addEventListener("input", () => {
   state.url = $("f-url").value.trim();
   save();
-  markUrlChips();
+  $("url-sample-note").hidden = state.url !== SAMPLE_URL;
 });
 $("f-url").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("forge").click();
 });
-SITES.forEach((s) => {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.textContent = s.label;
-  b.dataset.url = s.url;
-  b.addEventListener("click", () => {
-    $("f-url").value = s.url;
-    state.url = s.url;
-    save();
-    markUrlChips();
-  });
-  $("url-chips").append(b);
+$("steer").value = state.steer;
+$("steer").addEventListener("input", () => {
+  state.steer = $("steer").value;
+  save();
 });
-function markUrlChips() {
-  $("url-chips").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.url === state.url));
+$("url-toggle").addEventListener("click", () => {
+  urlRevealed = !urlRevealed;
+  renderEntry();
+});
+$("switch-brand").addEventListener("click", () => pickBrand($("switch-brand")));
+$("use-brand").addEventListener("click", () => pickBrand($("use-brand")));
+var CONCEPT_SHAPE = '{"concepts":[exactly 3 items, each {"name":string (2-4 word concept name),"angle":string,"hook":string (the scroll-stopping first line),"primaryText":string (Meta primary text, at most 125 words, short paragraphs separated by \\n\\n, the hook as its first line),"headline":string (max 40 characters),"description":string (max 30 characters),"cta":"Shop Now"|"Learn More"|"Get Offer"|"Sign Up","imagePrompt":string (vivid art-direction prompt for the ad hero image \u2014 no text, no logos in the image),"recommended":boolean}]}';
+function steerLine() {
+  const steer = state.steer.trim();
+  return steer ? `Steer all three concepts with this direction: "${steer}". Set each concept's "angle" to a 2-4 word label for the angle it takes.` : `Take 3 distinct angles (e.g. ${ANGLE_IDEAS.join("; ")}) \u2014 a different one per concept \u2014 and set each concept's "angle" accordingly.`;
 }
-markUrlChips();
-ANGLES.forEach((a) => {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.textContent = a;
-  if (state.angles.includes(a)) b.classList.add("on");
-  b.addEventListener("click", () => {
-    const i = state.angles.indexOf(a);
-    if (i === -1) state.angles.push(a);
-    else state.angles.splice(i, 1);
-    b.classList.toggle("on", i === -1);
-    save();
-  });
-  $("angle-chips").append(b);
-});
-function buildForgePrompt(url, cachedText, priorNames) {
-  const steer = state.angles.length ? `Steer the concepts with these angle(s): ${state.angles.join("; ")}. Use every selected angle at least once across the 3 concepts (distinct executions if an angle repeats), and set each concept's "angle" to the steer it follows.` : `Pick the 3 strongest angles from: ${ANGLES.join("; ")} \u2014 a different one per concept, and set each concept's "angle" accordingly.`;
+function freshLine(priorNames) {
+  return priorNames && priorNames.length ? `These concept names were already used \u2014 produce three NEW concepts with different hooks and names: ${priorNames.join(", ")}.` : "";
+}
+function buildBrandForgePrompt(b, priorNames) {
+  return [
+    "You are AdForge, a direct-response creative director who writes Meta (Facebook/Instagram) feed ads that stop thumbs.",
+    "The brand is already known \u2014 do NOT call WebFetch or any other tool. Work only from this brand context:",
+    `Brand: ${b.name}`,
+    b.positioning ? `Positioning: ${b.positioning}` : "",
+    b.voice ? `Voice \u2014 write ALL copy in this voice: ${b.voice}` : "",
+    b.audience ? `Audience \u2014 speak straight to them: ${b.audience}` : "",
+    b.products.length ? `Products: ${b.products.join("; ")}` : "",
+    b.palette.length ? `Brand palette \u2014 fold these into each imagePrompt's art direction: ${b.palette.join(", ")}` : "",
+    "Respond with ONLY a JSON object \u2014 no prose before or after, no markdown fences \u2014 in exactly this shape:",
+    CONCEPT_SHAPE,
+    steerLine(),
+    'Exactly ONE concept must have "recommended": true \u2014 the one you would run first.',
+    freshLine(priorNames)
+  ].filter(Boolean).join("\n");
+}
+function buildUrlForgePrompt(url, cachedText, priorNames) {
   const read = cachedText ? `Here is the page content, already fetched \u2014 do NOT call WebFetch:
 """
 ${cachedText}
 """` : `First use WebFetch to read ${url} \u2014 one fetch of that page is enough.`;
-  const fresh = priorNames && priorNames.length ? `These concept names were already used \u2014 produce three NEW concepts with different hooks and names: ${priorNames.join(", ")}.` : "";
   return [
     "You are AdForge, a direct-response creative director who writes Meta (Facebook/Instagram) feed ads that stop thumbs.",
     `Target website: ${url}`,
     read,
     "Then respond with ONLY a JSON object \u2014 no prose before or after, no markdown fences \u2014 in exactly this shape:",
-    '{"brand":{"name":string,"product":string (one line, what they sell),"tone":string,"colors":[2-4 hex color strings pulled from the site]},',
-    '"concepts":[exactly 3 items, each {"name":string (2-4 word concept name),"angle":string,"hook":string (the scroll-stopping first line),"primaryText":string (Meta primary text, at most 125 words, short paragraphs separated by \\n\\n, the hook as its first line),"headline":string (max 40 characters),"description":string (max 30 characters),"cta":"Shop Now"|"Learn More"|"Get Offer"|"Sign Up","imagePrompt":string (vivid art-direction prompt for the ad hero image \u2014 no text, no logos in the image),"recommended":boolean}]}',
-    steer,
+    '{"brand":{"name":string,"product":string (one line, what they sell),"tone":string,"colors":[2-4 hex color strings pulled from the site]},' + CONCEPT_SHAPE.slice(1),
+    steerLine(),
     'Exactly ONE concept must have "recommended": true \u2014 the one you would run first.',
-    fresh
+    freshLine(priorNames)
   ].filter(Boolean).join("\n");
 }
-function parseForge(raw) {
+function parseForge(raw, brandKnown) {
   try {
     const cleaned = String(raw).replace(/```(?:json)?/gi, "");
     const m = cleaned.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const data = JSON.parse(m[0]);
-    const b = data.brand || {};
     let list = Array.isArray(data.concepts) ? data.concepts : [];
     if (list.length < 3) return null;
     list = list.slice(0, 3).map((c) => ({
-      name: str(c.name, "Untitled casting"),
+      name: str(c.name, "Untitled concept"),
       angle: str(c.angle, "Direct response"),
       hook: str(c.hook, str(c.headline, "\u2014")),
       primaryText: str(c.primaryText, str(c.hook, "")),
@@ -675,11 +801,14 @@ function parseForge(raw) {
     list.forEach((c, i) => {
       c.recommended = i === (recAt === -1 ? 0 : recAt);
     });
+    if (brandKnown) return { brand: null, concepts: list };
+    const b = data.brand || {};
     return {
       brand: {
         name: str(b.name, "The brand"),
         product: str(b.product, ""),
         tone: str(b.tone, ""),
+        audience: "",
         colors: (Array.isArray(b.colors) ? b.colors : []).map(normHex).filter(Boolean).slice(0, 4)
       },
       concepts: list
@@ -690,23 +819,36 @@ function parseForge(raw) {
 }
 async function forgeRun(opts = {}) {
   if (!relay || forging || casting) return;
-  const url = $("f-url").value.trim();
-  if (!url) {
-    showError("Give the forge a site URL first.", null);
+  const mode = opts.mode === "brand" || opts.mode === "url" ? opts.mode : state.source === "brand" && lent ? "brand" : "url";
+  if (mode === "brand" && !lent) {
+    showError("No brand is lent \u2014 pick one with \u201Cuse a brand\u201D.", null);
     return;
   }
-  state.url = url;
-  const cached = !!(opts.useCache && state.siteCache && state.siteCacheUrl === url);
+  if (mode === "url") {
+    const url = $("f-url").value.trim();
+    if (!url) {
+      showError("Give the forge a site URL first.", null);
+      return;
+    }
+    state.url = url;
+  }
+  const cached = mode === "url" && !!(opts.useCache && state.siteCache && state.siteCacheUrl === state.url);
   const priorNames = opts.avoidRepeats ? state.concepts.map((c) => c.name) : null;
   forging = true;
   reflect();
   hideError();
   clearLog();
-  logLine(cached ? "using the banked site read \u2014 no re-fetch needed\u2026" : "opening the furnace door\u2026");
+  let prompt;
+  if (mode === "brand") {
+    logLine(`working from your lent brand \u201C${lent.name}\u201D \u2014 no site fetch needed\u2026`);
+    prompt = buildBrandForgePrompt(lent, priorNames);
+  } else {
+    logLine(cached ? "using the banked site read \u2014 no re-fetch needed\u2026" : "reading the site on your Claude\u2026");
+    prompt = buildUrlForgePrompt(state.url, cached ? state.siteCache : null, priorNames);
+  }
   const liveLine = logLine("drafting concepts\u2026 0.0 kb", "live");
   let acc = "";
   try {
-    const prompt = buildForgePrompt(url, cached ? state.siteCache : null, priorNames);
     for await (const d of relay.stream({ prompt, agentic: true })) {
       if (d.type === "tool_proposed") {
         if (d.call.name === "WebFetch") logLine("reading the site\u2026");
@@ -716,7 +858,7 @@ async function forgeRun(opts = {}) {
           const t = resultText(d);
           if (t) {
             state.siteCache = t.slice(0, 12e3);
-            state.siteCacheUrl = url;
+            state.siteCacheUrl = state.url;
             logLine("site read banked for reworks (" + Math.max(1, Math.round(t.length / 1024)) + " kb)");
           }
         } else if (d.result && !d.result.ok) {
@@ -729,16 +871,23 @@ async function forgeRun(opts = {}) {
         throw new Error(d.error?.message || "stream error");
       }
     }
-    const parsed = parseForge(acc);
-    if (!parsed) throw new Error("The forge returned malformed concepts \u2014 hit Retry; it usually casts clean on the second pour.");
-    state.brand = parsed.brand;
+    const parsed = parseForge(acc, mode === "brand");
+    if (!parsed) throw new Error("The forge returned malformed concepts \u2014 hit Retry; it usually lands clean on the second pass.");
+    state.brand = mode === "brand" ? {
+      name: lent.name,
+      product: lent.products[0] || "",
+      tone: lent.voice || lent.positioning || "",
+      audience: lent.audience || "",
+      colors: lent.palette.slice(0, 4)
+    } : parsed.brand;
+    state.source = mode;
     state.concepts = parsed.concepts;
     state.picked = -1;
     state.images = {};
     state.sample = false;
     save();
     liveLine.textContent = "drafting concepts\u2026 done";
-    logLine("three castings pulled from the fire \u2014 pick one below.", "good");
+    logLine("three concepts out of the fire \u2014 pick one below.", "good");
     renderConcepts();
     $("concepts-sec").hidden = false;
     $("studio-sec").hidden = true;
@@ -752,23 +901,119 @@ async function forgeRun(opts = {}) {
     reflect();
   }
 }
-$("forge").addEventListener("click", () => forgeRun({}));
-$("regen-copy").addEventListener("click", () => forgeRun({ useCache: true, avoidRepeats: true }));
+$("forge-brand").addEventListener("click", () => forgeRun({ mode: "brand" }));
+$("forge").addEventListener("click", () => forgeRun({ mode: "url" }));
+function regenConcepts() {
+  if (state.source === "brand" && lent) forgeRun({ mode: "brand", avoidRepeats: true });
+  else forgeRun({ mode: "url", useCache: true, avoidRepeats: true });
+}
+$("regen-concepts").addEventListener("click", regenConcepts);
+var COPY_SHAPE = '{"concept":{"name":string (2-4 word concept name),"hook":string (the scroll-stopping first line),"primaryText":string (Meta primary text, at most 125 words, short paragraphs separated by \\n\\n, the hook as its first line),"headline":string (max 40 characters),"description":string (max 30 characters),"cta":"Shop Now"|"Learn More"|"Get Offer"|"Sign Up"}}';
+function buildCopyRegenPrompt(c, b) {
+  const steer = state.steer.trim();
+  return [
+    "You are AdForge, a direct-response creative director who writes Meta (Facebook/Instagram) feed ads that stop thumbs.",
+    "Rewrite the copy for ONE existing ad concept \u2014 same brand, same angle, fresh words. Do NOT call WebFetch or any other tool. Work only from this brand context:",
+    `Brand: ${b.name || "The brand"}`,
+    b.product ? `Product: ${b.product}` : "",
+    b.tone ? `Tone \u2014 write ALL copy in this voice: ${b.tone}` : "",
+    b.audience ? `Audience \u2014 speak straight to them: ${b.audience}` : "",
+    `The concept to rework \u2014 keep its angle ("${c.angle}") and the spirit of its hook, but write a NEW hook, primary text, headline and description:`,
+    `Concept name: ${c.name}`,
+    `Current hook: ${c.hook}`,
+    `Current primary text:
+"""
+${c.primaryText}
+"""`,
+    steer ? `Steer the rewrite with this direction: "${steer}".` : "",
+    "Respond with ONLY a JSON object \u2014 no prose before or after, no markdown fences \u2014 in exactly this shape:",
+    COPY_SHAPE
+  ].filter(Boolean).join("\n");
+}
+function parseCopyRegen(raw, old) {
+  try {
+    const cleaned = String(raw).replace(/```(?:json)?/gi, "");
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const data = JSON.parse(m[0]);
+    const c = data.concept || (Array.isArray(data.concepts) ? data.concepts[0] : null);
+    if (!c || typeof c !== "object") return null;
+    return {
+      name: str(c.name, old.name),
+      angle: old.angle,
+      // the angle is fixed for a copy rework
+      hook: str(c.hook, old.hook),
+      primaryText: str(c.primaryText, str(c.hook, old.primaryText)),
+      headline: str(c.headline, old.headline).slice(0, 60),
+      description: str(c.description, old.description).slice(0, 40),
+      cta: CTAS.includes(c.cta) ? c.cta : old.cta,
+      imagePrompt: old.imagePrompt,
+      // copy only — the creative brief stays put
+      recommended: old.recommended
+      // exactly-one-recommended isn't up for grabs here
+    };
+  } catch {
+    return null;
+  }
+}
+async function copyRegenRun() {
+  if (!relay || forging || casting || state.picked < 0) return;
+  const c = cur();
+  const b = state.brand || {};
+  forging = true;
+  reflect();
+  hideError();
+  clearLog();
+  logLine(`reworking the copy on \u201C${c.name}\u201D \u2014 your pick and creative stay put\u2026`);
+  const liveLine = logLine("redrafting copy\u2026 0.0 kb", "live");
+  let acc = "";
+  try {
+    for await (const d of relay.stream({ prompt: buildCopyRegenPrompt(c, b), agentic: true })) {
+      if (d.type === "text") {
+        acc += d.text;
+        liveLine.textContent = "redrafting copy\u2026 " + (acc.length / 1024).toFixed(1) + " kb";
+      } else if (d.type === "tool_proposed") {
+        logLine("tool \u2192 " + d.call.name);
+      } else if (d.type === "tool_result") {
+        if (d.result && !d.result.ok) logLine("blocked: " + (d.result.error?.message || d.call.name), "bad");
+      } else if (d.type === "error") {
+        throw new Error(d.error?.message || "stream error");
+      }
+    }
+    const next = parseCopyRegen(acc, c);
+    if (!next) throw new Error("The forge returned malformed copy \u2014 hit Retry; it usually lands clean on the second pass.");
+    state.concepts[state.picked] = next;
+    save();
+    liveLine.textContent = "redrafting copy\u2026 done";
+    logLine("fresh copy on the bench \u2014 same concept, same creative.", "good");
+    renderConcepts();
+    renderStudio();
+  } catch (err) {
+    const msg = String(err?.message || err);
+    logLine("copy rework failed: " + msg, "bad");
+    showError(msg, copyRegenRun);
+  } finally {
+    forging = false;
+    reflect();
+  }
+}
+$("regen-copy").addEventListener("click", copyRegenRun);
 $("sample").addEventListener("click", () => {
   const s = JSON.parse(JSON.stringify(SAMPLE));
   state.url = s.url;
   $("f-url").value = s.url;
-  markUrlChips();
   state.brand = s.brand;
   state.concepts = s.concepts;
   state.picked = -1;
   state.images = {};
   state.sample = true;
+  state.source = "url";
   save();
   hideError();
   clearLog();
-  logLine("sample forge loaded from the archive \u2014 no tokens burned.", "good");
-  logLine("pick a casting below; connect Switchboard to cast a real creative.");
+  logLine("sample loaded from the archive \u2014 no tokens burned.", "good");
+  logLine("pick a concept below; connect Switchboard to forge for real.");
+  renderEntry();
   renderConcepts();
   $("concepts-sec").hidden = false;
   $("studio-sec").hidden = true;
@@ -779,58 +1024,40 @@ function renderBrandline() {
   const mount = $("brandline");
   mount.textContent = "";
   if (!b) return;
-  const name = document.createElement("b");
-  name.textContent = b.name;
-  mount.append(name, document.createTextNode(" \xB7 " + [b.product, b.tone].filter(Boolean).join(" \xB7 ") + " "));
+  mount.append(el("b", null, b.name));
+  const meta = [b.product, b.tone].filter(Boolean).join(" \xB7 ");
+  if (meta) mount.append(document.createTextNode(" \xB7 " + meta + " "));
   (b.colors || []).forEach((c) => {
-    const sw = document.createElement("span");
-    sw.className = "swatch";
+    const sw = el("span", "sw");
     sw.style.background = c;
     sw.title = c;
     mount.append(sw);
   });
-  if (state.sample) mount.append(document.createTextNode(" \xB7 SAMPLE"));
+  if (state.sample) mount.append(el("span", "srcchip sample", "sample"));
+  else if (state.source === "brand") mount.append(el("span", "srcchip", "your lent brand"));
 }
 function renderConcepts() {
   renderBrandline();
   const mount = $("cards");
   mount.textContent = "";
   state.concepts.forEach((c, i) => {
-    const card = document.createElement("button");
+    const card = el("button", "card" + (i === state.picked ? " picked" : ""));
     card.type = "button";
-    card.className = "card" + (i === state.picked ? " picked" : "");
-    const top = document.createElement("div");
-    top.className = "cardtop";
-    const angle = document.createElement("span");
-    angle.className = "anglechip";
-    angle.textContent = c.angle;
-    top.append(angle);
-    if (c.recommended) {
-      const rec = document.createElement("span");
-      rec.className = "recflag";
-      rec.textContent = "RECOMMENDED";
-      top.append(rec);
-    }
-    const hook = document.createElement("div");
-    hook.className = "hook";
-    hook.textContent = c.hook;
-    const prev = document.createElement("div");
-    prev.className = "copyprev";
+    const top = el("div", "cardtop");
+    top.append(el("span", "anglechip", c.angle));
+    if (c.recommended) top.append(el("span", "recflag", "RECOMMENDED"));
+    const prev = el("div", "copyprev");
     const flat = c.primaryText.replace(/\s+/g, " ").trim();
     prev.textContent = flat.slice(0, 150) + (flat.length > 150 ? "\u2026" : "");
-    const foot = document.createElement("div");
-    foot.className = "cardfoot";
-    const fh = document.createElement("span");
-    fh.className = "fh";
-    fh.textContent = c.headline;
-    const fc = document.createElement("span");
-    fc.className = "fc";
-    fc.textContent = c.cta + " \u2192";
-    foot.append(fh, fc);
-    const tag = document.createElement("div");
-    tag.className = "picktag";
-    tag.textContent = i === state.picked ? "ON THE ANVIL" : "PICK THIS CASTING";
-    card.append(top, hook, prev, foot, tag);
+    const foot = el("div", "cardfoot");
+    foot.append(el("span", "fh", c.headline), el("span", "fc", c.cta + " \u2192"));
+    card.append(
+      top,
+      el("div", "hook", c.hook),
+      prev,
+      foot,
+      el("div", "picktag", i === state.picked ? "SELECTED" : "PICK THIS CONCEPT")
+    );
     card.addEventListener("click", () => pick(i));
     mount.append(card);
   });
@@ -842,13 +1069,21 @@ function pick(i) {
   renderConcepts();
   renderStudio();
   $("studio-sec").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (relay && !state.sample && !casting) void castRun(state.aspect);
 }
 function sampleCreative(aspect) {
   const b = state.brand || {};
   const cols = Array.isArray(b.colors) && b.colors.length >= 2 ? b.colors : ["#212A2F", "#9BC0B2"];
   const w = 800, h = aspect === "4:5" ? 1e3 : 800;
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='${cols[0]}'/><stop offset='1' stop-color='${cols[1]}'/></linearGradient></defs><rect width='${w}' height='${h}' fill='url(#g)'/><text x='${w / 2}' y='${h / 2 - 14}' text-anchor='middle' font-family='Archivo, sans-serif' font-size='54' font-weight='700' fill='rgba(255,255,255,.95)'>${escXml(b.name || "Sample")}</text><text x='${w / 2}' y='${h / 2 + 36}' text-anchor='middle' font-family='monospace' font-size='22' letter-spacing='6' fill='rgba(255,255,255,.75)'>SAMPLE CREATIVE</text><text x='${w / 2}' y='${h - 46}' text-anchor='middle' font-family='monospace' font-size='18' fill='rgba(255,255,255,.6)'>connect Switchboard to cast the real one</text></svg>`;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='${cols[0]}'/><stop offset='1' stop-color='${cols[1]}'/></linearGradient></defs><rect width='${w}' height='${h}' fill='url(#g)'/><text x='${w / 2}' y='${h / 2 - 14}' text-anchor='middle' font-family='sans-serif' font-size='54' font-weight='700' fill='rgba(255,255,255,.95)'>${escXml(b.name || "Sample")}</text><text x='${w / 2}' y='${h / 2 + 36}' text-anchor='middle' font-family='monospace' font-size='22' letter-spacing='6' fill='rgba(255,255,255,.75)'>SAMPLE CREATIVE</text><text x='${w / 2}' y='${h - 46}' text-anchor='middle' font-family='monospace' font-size='18' fill='rgba(255,255,255,.6)'>connect Switchboard to render the real one</text></svg>`;
   return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+}
+function adDomain() {
+  if (state.source === "brand") {
+    const slug = (state.brand?.name || "brand").toLowerCase().replace(/[^a-z0-9]/g, "") || "brand";
+    return (slug + ".com").toUpperCase();
+  }
+  return domainOf(state.url);
 }
 function renderStudio() {
   const c = cur();
@@ -862,11 +1097,11 @@ function renderStudio() {
   $("m-name").textContent = b.name || "Brand";
   const av = $("m-avatar");
   av.textContent = ((b.name || "B").trim()[0] || "B").toUpperCase();
-  const c0 = b.colors && b.colors[0] || "#FF6A1A";
+  const c0 = b.colors && b.colors[0] || "#212A2F";
   av.style.background = c0;
   av.style.color = lum(c0) > 0.6 ? "#111" : "#fff";
   $("m-primary").textContent = c.primaryText;
-  $("m-domain").textContent = domainOf(state.url);
+  $("m-domain").textContent = adDomain();
   $("m-headline").textContent = c.headline;
   $("m-desc").textContent = c.description;
   $("m-cta").textContent = c.cta;
@@ -887,9 +1122,9 @@ function renderStudio() {
     img.hidden = true;
     img.removeAttribute("src");
     hint.hidden = false;
-    hint.textContent = relay ? "no creative cast yet \u2014 hit CAST THE CREATIVE" : "connect Switchboard to cast the creative";
+    hint.textContent = relay ? "no creative yet \u2014 hit Cast the creative" : "connect Switchboard to cast the creative";
   }
-  $("bench-note").textContent = state.sample && !real ? "Sample mode: the tile below is a stand-in. Connect and cast to render the real creative on your Claude." : "Creatives are cast per aspect \u2014 flip the toggle and AdForge re-fires the kiln at the new ratio.";
+  $("bench-note").textContent = state.sample && !real ? "Sample mode: the tile is a stand-in. Connect and cast to render the real creative on your Claude." : "Creatives render per aspect \u2014 flip the toggle and AdForge re-fires at the new ratio.";
   reflect();
 }
 function setCastLine(t) {
@@ -897,7 +1132,7 @@ function setCastLine(t) {
 }
 function castLineFor(name) {
   if (name === "WebFetch") return "reading the site\u2026";
-  if (name.endsWith("generate_image")) return "pouring the cast \u2014 image generating (approve if asked)\u2026";
+  if (name.endsWith("generate_image")) return "rendering the creative (approve if asked)\u2026";
   if (name.includes("media_")) return "handling media\u2026";
   return "tool \u2192 " + name;
 }
@@ -909,12 +1144,17 @@ async function castRun(aspect) {
   reflect();
   hideError();
   $("cast-status").hidden = false;
-  setCastLine("stoking the furnace\u2026");
-  logLine('kiln lit for "' + c.name + '" at ' + aspect + "\u2026");
+  setCastLine("warming up\u2026");
+  logLine('rendering "' + c.name + '" at ' + aspect + "\u2026");
   try {
     const palette = (b.colors || []).join(", ");
+    const brandBits = [
+      `Brand palette: ${palette || "natural, muted"}.`,
+      `Brand tone: ${b.tone || "clean and confident"}.`,
+      b.audience ? `Shot to stop the scroll of: ${b.audience}.` : ""
+    ].filter(Boolean).join(" ");
     const instruction = `Use the Higgsfield generate_image tool with model "nano_banana_pro" to generate ONE advertising image.
-Prompt: "${c.imagePrompt}. Brand palette: ${palette || "natural, muted"}. Brand tone: ${b.tone || "clean and confident"}. Premium Meta feed ad photography \u2014 no text, no lettering, no logos, no watermarks."
+Prompt: "${c.imagePrompt}. ${brandBits} Premium Meta feed ad photography \u2014 no text, no lettering, no logos, no watermarks."
 aspect_ratio "${aspect}". Poll until the generation is complete, then reply with ONLY the final image URL on its own line.`;
     let url = null, acc = "";
     for await (const d of relay.stream({ prompt: instruction, agentic: true })) {
@@ -933,10 +1173,10 @@ aspect_ratio "${aspect}". Poll until the generation is complete, then reply with
       }
     }
     url = url || extractUrl(acc);
-    if (!url) throw new Error("No image came back from the kiln \u2014 hit Retry or Recast; the second pour usually lands.");
+    if (!url) throw new Error("No image came back \u2014 hit Retry or Recast; the second pass usually lands.");
     state.images[aspect] = url;
     save();
-    logLine("creative cast at " + aspect + ".", "good");
+    logLine("creative rendered at " + aspect + ".", "good");
   } catch (err) {
     const msg = String(err?.message || err);
     logLine("cast failed: " + msg, "bad");
@@ -967,7 +1207,7 @@ $("m-img").addEventListener("error", () => {
   if ($("m-img").hidden || !$("m-img").getAttribute("src")) return;
   $("m-img").hidden = true;
   $("m-imghint").hidden = false;
-  $("m-imghint").textContent = "the cast cracked (image failed to load) \u2014 hit Recast image";
+  $("m-imghint").textContent = "the creative failed to load \u2014 hit Recast image";
 });
 async function copyText(btn, text) {
   const ok = () => {
@@ -1013,5 +1253,6 @@ if (state.concepts.length) {
   $("concepts-sec").hidden = false;
   renderStudio();
 }
+renderEntry();
 reflect();
 //# sourceMappingURL=adforge.js.map
