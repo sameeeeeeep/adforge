@@ -1,7 +1,43 @@
 // ../../packages/protocol/dist/version.js
 var PROVIDER_GLOBAL = "claude";
 
+// ../../packages/protocol/dist/storage.js
+var STORAGE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+function isValidStorageKey(key) {
+  return typeof key === "string" && STORAGE_KEY_RE.test(key);
+}
+
+// ../../packages/protocol/dist/errors.js
+var BYOPErrorCode = {
+  /** User rejected the connect/consent request. (≈ 4001) */
+  USER_REJECTED: 4001,
+  /** Origin is not connected / has no grant for this method. (≈ 4100) */
+  UNAUTHORIZED: 4100,
+  /** Method exists but the origin's scope doesn't cover it (model/tool not granted). */
+  SCOPE_EXCEEDED: 4110,
+  /** A per-action write consent was denied by the user. */
+  CONSENT_DENIED: 4120,
+  /** Budget or rate limit hit (tokens/day or calls/min). */
+  BUDGET_EXCEEDED: 4290,
+  /** Unknown method. (≈ 4200) */
+  UNSUPPORTED_METHOD: 4200,
+  /** Bad params. (≈ -32602) */
+  INVALID_PARAMS: -32602,
+  /** The sidekick daemon is not installed / not reachable. The SDK maps this to its
+   *  "install the sidekick" fallback. */
+  PROVIDER_UNAVAILABLE: 4900,
+  /** Backend error (model/tool failed for a non-policy reason). */
+  BACKEND_ERROR: 4500
+};
+
 // ../../packages/sdk/dist/connect-chip.js
+function rungFromError(e) {
+  if (e?.code !== BYOPErrorCode.PROVIDER_UNAVAILABLE)
+    return null;
+  return e?.data?.reason === "unpaired" ? { kind: "unpaired" } : { kind: "unreachable" };
+}
+var CHROME_STORE_URL = "https://chromewebstore.google.com/detail/injmjolmnekmahlnackakiamjepegagb";
+var RELAY_DMG_URL = "https://github.com/sameeeeeeep/switchboard/releases/latest/download/Relay.dmg";
 var STYLE = `
 :host { all: initial; }
 * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
@@ -46,6 +82,11 @@ var STYLE = `
   background: transparent; color: #B4BECE; font-size: 13px; font-weight: 500; cursor: pointer; }
 .menu .item:hover { background: #20262F; color: #E8EDF4; }
 .menu .foot { padding: 8px 10px 4px; font-size: 11px; font-weight: 500; color: #6E7C90; line-height: 1.4; }
+/* Setup-ladder pills (sidekick asleep / unpaired): quiet and informative, never red \u2014 nothing is
+   broken. Amber only while the daemon is unreachable; the glyph stays muted until it's reachable. */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #E8B84B; flex: none;
+  box-shadow: 0 0 8px rgba(232,184,75,.45); }
+.menu .body { padding: 8px 10px 2px; font-size: 12px; font-weight: 500; color: #B4BECE; line-height: 1.45; }
 `;
 function mountConnect(target, opts = {}) {
   const installUrl = opts.installUrl ?? "https://thelastprompt.ai/switchboard/";
@@ -64,6 +105,7 @@ function mountConnect(target, opts = {}) {
   let relay2 = null;
   let seq = 0;
   let wasConnected = false;
+  let lastProjectKey;
   let sessionDisconnected = false;
   const onDocClick = (e) => {
     if (menuOpen && !host.contains(e.target)) {
@@ -72,7 +114,21 @@ function mountConnect(target, opts = {}) {
     }
   };
   document.addEventListener("click", onDocClick);
-  function el2(tag, cls, text) {
+  const initEvent = `${PROVIDER_GLOBAL}#initialized`;
+  let lateWatching = false;
+  const onLateInit = () => {
+    lateWatching = false;
+    window.removeEventListener(initEvent, onLateInit);
+    if (!destroyed)
+      void refresh();
+  };
+  function watchForLateProvider() {
+    if (lateWatching || destroyed)
+      return;
+    lateWatching = true;
+    window.addEventListener(initEvent, onLateInit);
+  }
+  function el3(tag, cls, text) {
     const n = document.createElement(tag);
     if (cls)
       n.className = cls;
@@ -86,24 +142,57 @@ function mountConnect(target, opts = {}) {
     if (destroyed || my !== seq)
       return;
     if (!(r instanceof Relay)) {
+      watchForLateProvider();
       state2 = { kind: "not-installed", installUrl };
       return render();
     }
     relay2 = r;
     subscribe(r);
-    const grant = sessionDisconnected ? null : await r.permissions().catch(() => null);
+    const h = await r.health();
+    if (destroyed || my !== seq)
+      return;
+    if (h && !h.reachable) {
+      state2 = { kind: "unreachable", appMissing: h.installedHere === false };
+      emitTransition(false);
+      return render();
+    }
+    if (h && !h.paired) {
+      state2 = { kind: "unpaired" };
+      emitTransition(false);
+      return render();
+    }
+    let permErr = null;
+    const grant = sessionDisconnected ? null : await r.permissions().catch((e) => {
+      permErr = e;
+      return null;
+    });
     if (destroyed || my !== seq)
       return;
     if (!grant) {
+      const rung = !h ? rungFromError(permErr) : null;
+      if (rung) {
+        state2 = rung;
+        emitTransition(false);
+        return render();
+      }
       state2 = { kind: "disconnected", relay: r };
       emitTransition(false);
       return render();
     }
-    const [user, project] = await Promise.all([r.identity(), r.context.active().catch(() => null)]);
+    const wantsContext = opts.context !== "none";
+    const [user, project] = await Promise.all([
+      r.identity(),
+      wantsContext ? r.context.active().catch(() => null) : Promise.resolve(null)
+    ]);
     if (destroyed || my !== seq)
       return;
+    const wasAlreadyConnected = wasConnected;
     state2 = { kind: "connected", relay: r, user, project };
     emitTransition(true);
+    const projKey = project ? project.id ?? project.name : null;
+    if (wasAlreadyConnected && lastProjectKey !== void 0 && projKey !== lastProjectKey)
+      opts.onProjectChange?.(project);
+    lastProjectKey = projKey;
     render();
   }
   function emitTransition(connected) {
@@ -126,6 +215,9 @@ function mountConnect(target, opts = {}) {
     r.on("disconnect", () => {
       void refresh();
     });
+    r.on("health", () => {
+      void refresh();
+    });
   }
   async function doConnect() {
     if (!relay2)
@@ -134,7 +226,19 @@ function mountConnect(target, opts = {}) {
       sessionDisconnected = false;
       await relay2.connect(opts.scope);
       await refresh();
-    } catch {
+    } catch (e) {
+      const err = e;
+      if (err?.code !== BYOPErrorCode.PROVIDER_UNAVAILABLE)
+        return;
+      await refresh();
+      if (state2.kind === "disconnected") {
+        const rung = rungFromError(err);
+        if (rung) {
+          state2 = rung;
+          emitTransition(false);
+          render();
+        }
+      }
     }
   }
   async function doPick() {
@@ -142,8 +246,7 @@ function mountConnect(target, opts = {}) {
       return;
     menuOpen = false;
     render();
-    const project = await relay2.context.pick().catch(() => null);
-    opts.onProjectChange?.(project);
+    await relay2.context.pick().catch(() => null);
     await refresh();
   }
   async function doDisconnect() {
@@ -162,15 +265,109 @@ function mountConnect(target, opts = {}) {
     if (state2.kind === "booting")
       return;
     if (state2.kind === "not-installed") {
-      const b = el2("button", "btn get");
-      b.append(el2("span", "glyph"), el2("span", void 0, "Get Switchboard"), el2("span", "arr", "\u2197"));
-      b.onclick = () => window.open(state2.kind === "not-installed" ? state2.installUrl : installUrl, "_blank", "noopener");
-      mount.append(b);
+      const url = state2.installUrl;
+      const wrap2 = el3("div", "wrap");
+      const b = el3("button", "btn get");
+      b.append(el3("span", "glyph"), el3("span", void 0, "Get Switchboard"), el3("span", "arr", "\u2197"));
+      b.onclick = (e) => {
+        e.stopPropagation();
+        menuOpen = !menuOpen;
+        render();
+      };
+      wrap2.append(b);
+      if (menuOpen) {
+        const menu = el3("div", "menu");
+        menu.append(el3("div", "body", "Two parts: the Chrome extension, then Relay for Mac."));
+        const store = el3("button", "item", "1 \xB7 Add to Chrome \u2197");
+        store.onclick = () => {
+          menuOpen = false;
+          render();
+          window.open(CHROME_STORE_URL, "_blank", "noopener");
+        };
+        const guide = el3("button", "item", "2 \xB7 Get Relay for Mac \u2197");
+        guide.onclick = () => {
+          menuOpen = false;
+          render();
+          window.open(url, "_blank", "noopener");
+        };
+        menu.append(store, guide);
+        wrap2.append(menu);
+      }
+      mount.append(wrap2);
+      return;
+    }
+    if (state2.kind === "unreachable") {
+      const appMissing = state2.appMissing === true;
+      const wrap2 = el3("div", "wrap");
+      const b = el3("button", "btn get");
+      b.append(el3("span", "glyph"), el3("span", void 0, appMissing ? "Get Relay for Mac" : "Your sidekick is asleep"), el3("span", appMissing ? "arr" : "dot", appMissing ? "\u2197" : void 0), ...appMissing ? [] : [el3("span", "caret", "\u25BE")]);
+      b.onclick = (e) => {
+        e.stopPropagation();
+        menuOpen = !menuOpen;
+        render();
+      };
+      wrap2.append(b);
+      if (menuOpen) {
+        const menu = el3("div", "menu");
+        if (appMissing) {
+          menu.append(el3("div", "body", "Extension \u2713 \u2014 now the other half: Relay, the Mac app that holds your Claude."));
+          const dl = el3("button", "item", "Download Relay.dmg \u2197");
+          dl.onclick = () => {
+            menuOpen = false;
+            render();
+            window.open(RELAY_DMG_URL, "_blank", "noopener");
+          };
+          menu.append(dl, el3("div", "sep"));
+        } else {
+          menu.append(el3("div", "body", "Open the Relay menubar app to wake it."));
+          const retry = el3("button", "item", "Retry");
+          retry.onclick = () => {
+            menuOpen = false;
+            render();
+            void refresh();
+          };
+          menu.append(retry, el3("div", "sep"));
+        }
+        const setup = el3("button", "item", "New here? Full setup \u2197");
+        setup.onclick = () => {
+          menuOpen = false;
+          render();
+          window.open(installUrl, "_blank", "noopener");
+        };
+        menu.append(setup);
+        wrap2.append(menu);
+      }
+      mount.append(wrap2);
+      return;
+    }
+    if (state2.kind === "unpaired") {
+      const wrap2 = el3("div", "wrap");
+      const b = el3("button", "btn connect");
+      b.append(el3("span", "glyph"), el3("span", void 0, "Almost there \u2014 pair in the side panel"), el3("span", "caret", "\u25BE"));
+      b.onclick = (e) => {
+        e.stopPropagation();
+        menuOpen = !menuOpen;
+        render();
+      };
+      wrap2.append(b);
+      if (menuOpen) {
+        const menu = el3("div", "menu");
+        menu.append(el3("div", "body", "Click the Switchboard icon in your Chrome toolbar and paste your pairing token."));
+        const retry = el3("button", "item", "Retry");
+        retry.onclick = () => {
+          menuOpen = false;
+          render();
+          void refresh();
+        };
+        menu.append(retry);
+        wrap2.append(menu);
+      }
+      mount.append(wrap2);
       return;
     }
     if (state2.kind === "disconnected") {
-      const b = el2("button", "btn connect");
-      b.append(el2("span", "glyph"), el2("span", void 0, "Connect Switchboard"));
+      const b = el3("button", "btn connect");
+      b.append(el3("span", "glyph"), el3("span", void 0, "Connect Switchboard"));
       b.onclick = doConnect;
       mount.append(b);
       return;
@@ -179,20 +376,21 @@ function mountConnect(target, opts = {}) {
     const rawName = user?.name?.trim();
     const collides = !!rawName && !!project?.name && rawName.toLowerCase() === project.name.toLowerCase();
     const name = !rawName || collides ? "there" : rawName;
-    const wrap = el2("div", "wrap");
-    const chip = el2("button", "chip");
-    const av = el2("div", "av");
+    const wrap = el3("div", "wrap");
+    const chip = el3("button", "chip");
+    const av = el3("div", "av");
     if (user?.avatar) {
-      const img = el2("img");
+      const img = el3("img");
       img.src = user.avatar;
       img.alt = name;
       av.append(img);
     } else
       av.textContent = name.charAt(0).toUpperCase();
-    const who = el2("div", "who");
-    who.append(el2("div", "hi", `Hi ${name}`));
-    who.append(el2("div", "proj", project ? project.name : "No context lent"));
-    chip.append(av, who, el2("span", "caret", "\u25BE"));
+    const wantsContext = opts.context !== "none";
+    const who = el3("div", "who");
+    who.append(el3("div", "hi", `Hi ${name}`));
+    who.append(el3("div", "proj", wantsContext ? project ? project.name : "No context lent" : "Connected"));
+    chip.append(av, who, el3("span", "caret", "\u25BE"));
     chip.onclick = (e) => {
       e.stopPropagation();
       menuOpen = !menuOpen;
@@ -200,17 +398,19 @@ function mountConnect(target, opts = {}) {
     };
     wrap.append(chip);
     if (menuOpen) {
-      const menu = el2("div", "menu");
-      menu.append(el2("div", "lbl", "Working on"));
-      const row = el2("button", "proj-row");
-      row.append(el2("span", void 0, project ? project.name : "Choose a context"));
-      row.append(el2("span", "go", project ? "Switch \u25B8" : "Choose \u25B8"));
-      row.onclick = doPick;
-      menu.append(row, el2("div", "sep"));
-      const dc = el2("button", "item", "Disconnect this app");
+      const menu = el3("div", "menu");
+      if (wantsContext) {
+        menu.append(el3("div", "lbl", "Working on"));
+        const row = el3("button", "proj-row");
+        row.append(el3("span", void 0, project ? project.name : "Choose a context"));
+        row.append(el3("span", "go", project ? "Switch \u25B8" : "Choose \u25B8"));
+        row.onclick = doPick;
+        menu.append(row, el3("div", "sep"));
+      }
+      const dc = el3("button", "item", "Disconnect this app");
       dc.onclick = doDisconnect;
       menu.append(dc);
-      menu.append(el2("div", "foot", "Connectors, budgets & activity live in the Switchboard toolbar panel."));
+      menu.append(el3("div", "foot", "Connectors, budgets & activity live in the Switchboard toolbar panel."));
       wrap.append(menu);
     }
     mount.append(wrap);
@@ -222,12 +422,23 @@ function mountConnect(target, opts = {}) {
     destroy: () => {
       destroyed = true;
       document.removeEventListener("click", onDocClick);
+      window.removeEventListener(initEvent, onLateInit);
       host.remove();
     }
   };
 }
 
 // ../../packages/sdk/dist/index.js
+var warnedStorageKeys = /* @__PURE__ */ new Set();
+function warnBadStorageKey(key) {
+  if (isValidStorageKey(key) || warnedStorageKeys.has(key))
+    return;
+  warnedStorageKeys.add(key);
+  const suggestion = String(key).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "") || "key";
+  console.warn(`[relay.storage] invalid key ${JSON.stringify(key)} \u2014 this write/read WILL be rejected by the daemon and silently do nothing.
+  Keys map 1:1 to files (<key>.json) in this origin's folder, so they must match ${STORAGE_KEY_RE}.
+  ":" is not allowed (illegal on NTFS; "a:b" is Alternate Data Stream syntax on Windows). Try ${JSON.stringify(suggestion)}.`);
+}
 var Relay = class {
   provider;
   constructor(provider) {
@@ -249,6 +460,17 @@ var Relay = class {
   }
   permissions() {
     return this.provider.request({ method: "claude_permissions" });
+  }
+  /** The setup-ladder snapshot (reachable/paired/connected), answered by the EXTENSION from its
+   *  own state — never the daemon — so it resolves fast (<1s) in every degraded state, including
+   *  the ones where every other method would hang. Resolves null when the extension is too old to
+   *  know `claude_health` (or its worker is unreachable): callers MUST treat null as "unknown"
+   *  and fall back to probing permissions() exactly as before — that skew guard is load-bearing
+   *  while store users run an older extension against newer app bundles. */
+  health() {
+    const answer = this.provider.request({ method: "claude_health" }).catch(() => null);
+    const timer = new Promise((resolve) => setTimeout(() => resolve(null), 1500));
+    return Promise.race([answer, timer]);
   }
   /** The paired user's public identity (name/avatar), or null if unavailable. Convenience over
    *  capabilities().user — what the connect chip greets with ("Hi Sameep"). */
@@ -319,14 +541,23 @@ var Relay = class {
    */
   get storage() {
     const req = (params) => this.provider.request({ method: "claude_storage", params });
+    const k = (key) => {
+      warnBadStorageKey(key);
+      return key;
+    };
     return {
-      get: (key) => req({ op: "get", key }).then((r) => r.value ?? null),
-      set: (key, value) => req({ op: "set", key, value }).then(() => void 0),
-      delete: (key) => req({ op: "delete", key }).then((r) => r.ok),
+      get: (key) => req({ op: "get", key: k(key) }).then((r) => r.value ?? null),
+      set: (key, value) => req({ op: "set", key: k(key), value }).then(() => void 0),
+      delete: (key) => req({ op: "delete", key: k(key) }).then((r) => r.ok),
       list: () => req({ op: "list" }).then((r) => r.keys ?? []),
       info: () => req({ op: "info" }).then((r) => r.info),
       /** Point this app's store at a real folder (triggers a path-consent click). */
-      bind: (path) => req({ op: "bind", path }).then((r) => r.info)
+      bind: (path) => req({ op: "bind", path }).then((r) => r.info),
+      /** Open a NATIVE folder chooser on the daemon's machine (macOS today). The user picking a
+       *  folder in an OS dialog that names this origin IS the path consent, so a successful pick
+       *  comes back already bound. Resolves undefined on cancel or when no native picker exists —
+       *  keep a typed-path `bind` as the fallback UI. */
+      pick: (reason) => req({ op: "pick", reason }).then((r) => r.info).catch(() => void 0)
     };
   }
   /**
@@ -343,7 +574,10 @@ var Relay = class {
       publish: (context) => req({ op: "publish", context }).then((r) => r.id),
       list: () => req({ op: "list" }).then((r) => r.contexts ?? []),
       active: () => req({ op: "active" }).then((r) => r.context ?? null),
-      pick: () => req({ op: "pick" }).then((r) => r.context ?? null)
+      pick: () => req({ op: "pick" }).then((r) => r.context ?? null),
+      /** Read ONE context listed via `list()` in full, and make it this app's selection. Needs the
+       *  kind granted at connect (ScopeRequest.contextKinds) — powers in-app brand dropdowns. */
+      use: (id) => req({ op: "use", id }).then((r) => r.context ?? null)
     };
   }
 };
@@ -375,10 +609,243 @@ function whenRelayReady(timeoutMs = 3e3, opts) {
   });
 }
 
+// src/store/bankit.js
+var CSS = `
+.bankit{font:inherit;font-size:11px;line-height:1;letter-spacing:.01em;display:inline-flex;align-items:center;
+  gap:.42em;padding:.45em .68em;margin-left:.2em;border:1px solid currentColor;border-radius:999px;
+  background:transparent;color:inherit;opacity:.55;cursor:pointer;vertical-align:middle;
+  transition:opacity .14s ease;white-space:nowrap;font-weight:500;}
+.bankit:hover:not(:disabled){opacity:1;}
+.bankit:disabled{cursor:default;}
+.bankit.is-done{opacity:.78;}
+.bankit.is-bad{opacity:.9;}
+.bankit-offer{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-top:12px;padding:12px 14px;
+  border:1px dashed currentColor;border-radius:10px;opacity:.92;font-size:12.5px;line-height:1.5;}
+.bankit-offer .bo-main{flex:1 1 240px;min-width:0;}
+.bankit-offer .bo-line{font-weight:600;}
+.bankit-offer .bo-sub{opacity:.62;font-size:11.5px;margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.bankit-offer .bo-sw{width:11px;height:11px;border-radius:3px;display:inline-block;}
+.bankit-offer .bo-acts{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
+.bankit-offer button{font:inherit;font-size:11.5px;padding:.5em .8em;border-radius:7px;cursor:pointer;
+  border:1px solid currentColor;background:transparent;color:inherit;}
+.bankit-offer button.bo-use{background:currentColor;}
+.bankit-offer button.bo-use span{filter:invert(1) grayscale(1) contrast(3);}
+.bankit-offer button.bo-skip{opacity:.62;}
+.bankit-offer button.bo-skip:hover{opacity:1;}
+`;
+function injectCss() {
+  if (typeof document === "undefined" || document.getElementById("bankit-css")) return;
+  const s = document.createElement("style");
+  s.id = "bankit-css";
+  s.textContent = CSS;
+  (document.head || document.documentElement).append(s);
+}
+var el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+var slugId = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+var nameKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+function hostOf(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : "https://" + raw).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split("/")[0].replace(/^www\./i, "").toLowerCase();
+  }
+}
+var GENERIC = /* @__PURE__ */ new Set([
+  "com",
+  "co",
+  "net",
+  "org",
+  "io",
+  "ai",
+  "app",
+  "dev",
+  "shop",
+  "store",
+  "xyz",
+  "me",
+  "us",
+  "uk",
+  "in",
+  "eu",
+  "de",
+  "fr",
+  "es",
+  "it",
+  "nl",
+  "au",
+  "ca",
+  "jp",
+  "example",
+  "test",
+  "local",
+  "myshopify",
+  "webflow",
+  "squarespace",
+  "wixsite",
+  "github",
+  "vercel",
+  "netlify",
+  "pages"
+]);
+function siteKey(host) {
+  const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) if (!GENERIC.has(parts[i])) return parts[i];
+  return parts[0] || "";
+}
+function matchBankedByUrl(metas, url, kind = "brand") {
+  const key = siteKey(hostOf(url));
+  if (!key || key.length < 3) return null;
+  const pool = (metas || []).filter((m) => m && (m.kind || "").toLowerCase() === String(kind).toLowerCase());
+  return pool.find((m) => nameKey(m.name) === key) || pool.find((m) => {
+    const n = nameKey(m.name);
+    return n.length >= 4 && (n.includes(key) || key.includes(n));
+  }) || null;
+}
+async function listContexts(relay2) {
+  if (!relay2 || !relay2.context || typeof relay2.context.list !== "function") return [];
+  try {
+    const metas = await relay2.context.list();
+    return Array.isArray(metas) ? metas : [];
+  } catch {
+    return [];
+  }
+}
+async function findBankedForUrl(relay2, url, kind = "brand") {
+  if (!url) return null;
+  return matchBankedByUrl(await listContexts(relay2), url, kind);
+}
+async function useContext(relay2, id) {
+  if (!relay2 || !relay2.context || typeof relay2.context.use !== "function") return null;
+  try {
+    return await relay2.context.use(id) || null;
+  } catch {
+    return null;
+  }
+}
+function mountBankIt(mount, opts = {}) {
+  const { relay: relay2, kind, draft, contexts, onPublished } = opts;
+  if (!mount || !relay2 || !relay2.context || typeof relay2.context.publish !== "function") return null;
+  if (!draft || !String(draft.name || "").trim() || !kind) return null;
+  injectCss();
+  const name = String(draft.name).trim();
+  const id = String(draft.id || slugId(name) || slugId(kind + "-" + name));
+  if (!id) return null;
+  const already = (contexts || []).some((c) => {
+    if (!c || (c.kind || "").toLowerCase() !== String(kind).toLowerCase()) return false;
+    return c.id === id || nameKey(c.name) === nameKey(name);
+  });
+  const btn = el("button", "bankit");
+  btn.type = "button";
+  const label = (t) => {
+    btn.textContent = t;
+  };
+  if (already) {
+    btn.classList.add("is-done");
+    label("already in your library \u2713 \xB7 update it");
+    btn.title = `re-publishes ${name} over the copy already in your Switchboard library \u2014 same entry, refreshed`;
+  } else {
+    label(`\u2191 Bank ${name} \u2014 every app can borrow it`);
+    btn.title = "puts it in your Switchboard library; each app still asks before it can use it.";
+  }
+  btn.addEventListener("click", async () => {
+    if (btn.disabled) return;
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.classList.remove("is-bad");
+    label("banking\u2026");
+    try {
+      await relay2.context.publish({ id, name, kind, data: draft.data || {} });
+      btn.classList.add("is-done");
+      label("in your library \u2713");
+      if (typeof onPublished === "function") {
+        onPublished({ id, name, kind, updatedAt: Date.now() });
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.classList.add("is-bad");
+      label(prev);
+      btn.title = "couldn't bank it \u2014 " + String(e?.message || e).slice(0, 140);
+    }
+  });
+  mount.append(btn);
+  return btn;
+}
+function mountBorrowOffer(mount, opts = {}) {
+  if (!mount) return null;
+  injectCss();
+  const { name, detail, swatches, onUse, onDismiss } = opts;
+  const label = String(name || "that brand");
+  mount.textContent = "";
+  const box = el("div", "bankit-offer");
+  const main = el("div", "bo-main");
+  main.append(el("div", "bo-line", `you've already banked ${label} \u2014 use that instead of re-reading the site?`));
+  const sub = el("div", "bo-sub");
+  sub.append(el("span", null, detail || "from your Switchboard library"));
+  for (const c of (swatches || []).slice(0, 4)) {
+    const sw = el("span", "bo-sw");
+    sw.style.background = c;
+    sw.title = String(c);
+    sub.append(sw);
+  }
+  main.append(sub);
+  const acts = el("div", "bo-acts");
+  const use = el("button", "bo-use");
+  use.type = "button";
+  use.append(el("span", null, `use ${label}`));
+  const skip = el("button", "bo-skip", "read the site anyway");
+  skip.type = "button";
+  const close = () => {
+    mount.textContent = "";
+    mount.hidden = true;
+  };
+  use.addEventListener("click", () => {
+    close();
+    if (typeof onUse === "function") onUse();
+  });
+  skip.addEventListener("click", () => {
+    close();
+    if (typeof onDismiss === "function") onDismiss();
+  });
+  acts.append(use, skip);
+  box.append(main, acts);
+  mount.append(box);
+  mount.hidden = false;
+  return box;
+}
+function clearBorrowOffer(mount) {
+  if (!mount) return;
+  mount.textContent = "";
+  mount.hidden = true;
+}
+
+// src/kit/storekey.js
+function migrateLocalKey(oldKey, newKey) {
+  if (oldKey === newKey) return;
+  try {
+    if (localStorage.getItem(newKey) !== null) {
+      localStorage.removeItem(oldKey);
+      return;
+    }
+    const old = localStorage.getItem(oldKey);
+    if (old === null) return;
+    localStorage.setItem(newKey, old);
+    localStorage.removeItem(oldKey);
+  } catch {
+  }
+}
+
 // src/adforge.js
 var $ = (id) => document.getElementById(id);
 var INSTALL_URL = "https://thelastprompt.ai/switchboard/";
-var STORE_KEY = "adforge:state";
+var STORE_KEY = "adforge-state";
+migrateLocalKey("adforge:state", STORE_KEY);
 var SAMPLE_URL = "https://www.allbirds.com";
 var ANGLE_IDEAS = ["UGC hook", "Problem \u2192 agitate \u2192 solve", "Founder story", "Offer-led urgency"];
 var CTAS = ["Shop Now", "Learn More", "Get Offer", "Sign Up"];
@@ -390,6 +857,9 @@ var casting = false;
 var lastAction = null;
 var lent = null;
 var urlRevealed = false;
+var autoForgeKey = null;
+var libraryMetas = [];
+var borrowSkipped = "";
 var state = {
   url: SAMPLE_URL,
   steer: "",
@@ -453,22 +923,42 @@ var SAMPLE = {
   ]
 };
 function save() {
+  state.savedAt = Date.now();
+  const payload = JSON.stringify({
+    url: state.url,
+    steer: state.steer,
+    source: state.source,
+    brand: state.brand,
+    concepts: state.concepts,
+    picked: state.picked,
+    aspect: state.aspect,
+    images: state.images,
+    sample: state.sample,
+    savedAt: state.savedAt,
+    siteCache: state.siteCache ? state.siteCache.slice(0, 12e3) : null,
+    siteCacheUrl: state.siteCacheUrl
+  });
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({
-      url: state.url,
-      steer: state.steer,
-      source: state.source,
-      brand: state.brand,
-      concepts: state.concepts,
-      picked: state.picked,
-      aspect: state.aspect,
-      images: state.images,
-      sample: state.sample,
-      siteCache: state.siteCache ? state.siteCache.slice(0, 12e3) : null,
-      siteCacheUrl: state.siteCacheUrl
-    }));
+    localStorage.setItem(STORE_KEY, payload);
   } catch {
   }
+  if (relay && relay.storage && typeof relay.storage.set === "function") {
+    try {
+      void relay.storage.set(STORE_KEY, payload).catch(() => {
+      });
+    } catch {
+    }
+  }
+}
+function coerceState() {
+  if (typeof state.url !== "string" || !state.url) state.url = SAMPLE_URL;
+  if (typeof state.steer !== "string") state.steer = "";
+  if (state.source !== "brand") state.source = "url";
+  if (!Array.isArray(state.concepts)) state.concepts = [];
+  if (!state.images || typeof state.images !== "object") state.images = {};
+  if (state.aspect !== "4:5") state.aspect = "1:1";
+  if (typeof state.savedAt !== "number") state.savedAt = 0;
+  if (!(Number.isInteger(state.picked) && state.picked >= 0 && state.picked < state.concepts.length)) state.picked = -1;
 }
 function load() {
   try {
@@ -476,16 +966,40 @@ function load() {
     if (s && typeof s === "object") Object.assign(state, s);
   } catch {
   }
-  if (typeof state.url !== "string" || !state.url) state.url = SAMPLE_URL;
-  if (typeof state.steer !== "string") state.steer = "";
-  if (state.source !== "brand") state.source = "url";
-  if (!Array.isArray(state.concepts)) state.concepts = [];
-  if (!state.images || typeof state.images !== "object") state.images = {};
-  if (state.aspect !== "4:5") state.aspect = "1:1";
-  if (!(Number.isInteger(state.picked) && state.picked >= 0 && state.picked < state.concepts.length)) state.picked = -1;
+  coerceState();
 }
 load();
-var el = (tag, cls, text) => {
+async function syncFromRelayStorage() {
+  if (!relay || !relay.storage || typeof relay.storage.get !== "function") return;
+  let raw = null, parsed = null;
+  try {
+    raw = await relay.storage.get(STORE_KEY);
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== "object") return;
+  if ((parsed.savedAt || 0) <= (state.savedAt || 0)) return;
+  Object.assign(state, parsed);
+  coerceState();
+  try {
+    localStorage.setItem(STORE_KEY, raw);
+  } catch {
+  }
+  resetExpanded();
+  $("f-url").value = state.url;
+  $("steer").value = state.steer;
+  renderEntry();
+  if (state.concepts.length) {
+    renderConcepts();
+    $("concepts-sec").hidden = false;
+  } else {
+    $("cards").textContent = "";
+    $("concepts-sec").hidden = true;
+  }
+  renderStudio();
+}
+var el2 = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
@@ -566,7 +1080,24 @@ async function loadBrandCtx() {
   } catch {
     lent = null;
   }
+  libraryMetas = await listContexts(relay);
+  if (!lent && libraryMetas.length && typeof relay.context.use === "function") {
+    const brands = libraryMetas.filter((m) => (m.kind || "").toLowerCase() === "brand");
+    if (brands.length) {
+      const ctx = await useContext(relay, brands[0].id);
+      lent = ctx ? normalizeBrand(ctx) : null;
+    }
+  }
   if (lent && state.sample) wipeSample();
+}
+function maybeAutoForge() {
+  if (!relay || !lent || forging || casting || state.sample) return;
+  if (autoForgeKey === lent.name) return;
+  autoForgeKey = lent.name;
+  if (state.source === "brand" && state.brand && state.brand.name === lent.name && state.concepts.length > 0) {
+    return;
+  }
+  void forgeRun({ mode: "brand", note: "forging from your lent brand automatically \u2014 steer + Regenerate to redirect" });
 }
 async function pickBrand(btn) {
   if (!relay || !relay.context || typeof relay.context.pick !== "function") {
@@ -583,6 +1114,7 @@ async function pickBrand(btn) {
       if (state.source === "brand" && (!lent || next.name !== lent.name)) clearBrandConcepts();
       lent = next;
       urlRevealed = false;
+      autoForgeKey = null;
       if (state.sample) wipeSample();
     }
   } catch (err) {
@@ -592,11 +1124,12 @@ async function pickBrand(btn) {
     btn.disabled = false;
     renderEntry();
     reflect();
+    maybeAutoForge();
   }
 }
 function logLine(text, cls) {
   $("forgelog").hidden = false;
-  const d = el("div", "logline" + (cls ? " " + cls : ""), text);
+  const d = el2("div", "logline" + (cls ? " " + cls : ""), text);
   $("log").append(d);
   $("log").scrollTop = $("log").scrollHeight;
   return d;
@@ -619,21 +1152,28 @@ $("err-retry").addEventListener("click", () => {
 });
 mountConnect($("chip-dock"), {
   scope: {
-    reason: "forge Meta ads from your lent brand or a site you name",
+    reason: "forge Meta ads from your lent brand or a site you name \u2014 and offer to bank what it reads off that site as a brand in your library",
     tools: ["WebFetch", "mcp__claude_ai_Higgsfield__*"],
-    models: ["sonnet"]
+    models: ["sonnet"],
+    // Lets loadBrandCtx auto-select a brand via list()+use() when nothing is lent. NOT relied
+    // on for returning users: reused grants are exact-match and ignore newly requested kinds,
+    // so every list()/use() caller tolerates an empty result or a throw.
+    contextKinds: ["brand"]
   },
   installUrl: INSTALL_URL,
   onConnect: async (r) => {
     relay = r;
     wipeSample();
     await loadBrandCtx();
+    await syncFromRelayStorage();
     renderEntry();
     reflect();
+    maybeAutoForge();
   },
   onDisconnect: () => {
     relay = null;
     lent = null;
+    autoForgeKey = null;
     renderEntry();
     reflect();
   },
@@ -644,9 +1184,12 @@ mountConnect($("chip-dock"), {
   onProjectChange: async () => {
     const prev = lent;
     await loadBrandCtx();
-    if (state.source === "brand" && (prev && prev.name) !== (lent && lent.name)) clearBrandConcepts();
+    const changed = (prev && prev.name) !== (lent && lent.name);
+    if (changed) autoForgeKey = null;
+    if (state.source === "brand" && changed) clearBrandConcepts();
     renderEntry();
     reflect();
+    maybeAutoForge();
   }
 });
 (async () => {
@@ -657,12 +1200,14 @@ mountConnect($("chip-dock"), {
       relay = r;
       wipeSample();
       await loadBrandCtx();
+      await syncFromRelayStorage();
     }
   } else {
     notInstalled = true;
   }
   renderEntry();
   reflect();
+  maybeAutoForge();
 })();
 function renderEntry() {
   const hasBrand = !!(relay && lent);
@@ -679,7 +1224,7 @@ function renderEntry() {
     const bits = [lent.positioning || lent.voice, lent.audience ? "for " + lent.audience : ""].filter(Boolean).join(" \xB7 ");
     if (bits) line.append(document.createTextNode(bits + " "));
     for (const c of lent.palette.slice(0, 4)) {
-      const sw = el("span", "sw");
+      const sw = el2("span", "sw");
       sw.style.background = c;
       sw.title = c;
       line.append(sw);
@@ -689,6 +1234,7 @@ function renderEntry() {
 function reflect() {
   const busy = forging || casting;
   const on = !!relay;
+  $("cards").classList.toggle("busy", busy);
   $("forge").disabled = !on || busy;
   $("forge").textContent = forging ? "Forging\u2026" : "Forge concepts";
   $("forge-brand").disabled = !on || busy;
@@ -708,7 +1254,7 @@ function reflect() {
     hint.textContent = "runs on your Claude \u2014 the site read and every render are yours";
   } else if (notInstalled) {
     hint.append("Switchboard isn't installed \u2014 ");
-    const a = el("a", null, "get it here");
+    const a = el2("a", null, "get it here");
     a.href = INSTALL_URL;
     a.target = "_blank";
     a.rel = "noreferrer";
@@ -817,6 +1363,39 @@ function parseForge(raw, brandKnown) {
     return null;
   }
 }
+async function offerBorrow(url) {
+  const dock = $("borrow");
+  if (!dock || !relay || !url || borrowSkipped === url) return false;
+  if (lent && !urlRevealed) return false;
+  const meta = await findBankedForUrl(relay, url, "brand");
+  if (!meta) return false;
+  mountBorrowOffer(dock, {
+    name: meta.name,
+    detail: `banked brand \xB7 ${hostOf(url) || "your library"} \u2014 read once, reusable everywhere`,
+    swatches: meta.swatches || [],
+    onUse: async () => {
+      const ctx = await useContext(relay, meta.id);
+      if (!ctx) {
+        borrowSkipped = url;
+        void forgeRun({ mode: "url" });
+        return;
+      }
+      lent = normalizeBrand(ctx);
+      urlRevealed = false;
+      autoForgeKey = lent.name;
+      if (state.sample) wipeSample();
+      renderEntry();
+      reflect();
+      void forgeRun({ mode: "brand", note: `working from your banked \u201C${lent.name}\u201D \u2014 the site stays unread` });
+    },
+    // Dismissal always re-runs the fetch path — the offer is never a dead end.
+    onDismiss: () => {
+      borrowSkipped = url;
+      void forgeRun({ mode: "url" });
+    }
+  });
+  return true;
+}
 async function forgeRun(opts = {}) {
   if (!relay || forging || casting) return;
   const mode = opts.mode === "brand" || opts.mode === "url" ? opts.mode : state.source === "brand" && lent ? "brand" : "url";
@@ -833,11 +1412,14 @@ async function forgeRun(opts = {}) {
     state.url = url;
   }
   const cached = mode === "url" && !!(opts.useCache && state.siteCache && state.siteCacheUrl === state.url);
+  if (mode === "url" && !cached && await offerBorrow(state.url)) return;
   const priorNames = opts.avoidRepeats ? state.concepts.map((c) => c.name) : null;
   forging = true;
   reflect();
   hideError();
+  clearBorrowOffer($("borrow"));
   clearLog();
+  if (opts.note) logLine(opts.note);
   let prompt;
   if (mode === "brand") {
     logLine(`working from your lent brand \u201C${lent.name}\u201D \u2014 no site fetch needed\u2026`);
@@ -885,6 +1467,7 @@ async function forgeRun(opts = {}) {
     state.picked = -1;
     state.images = {};
     state.sample = false;
+    resetExpanded();
     save();
     liveLine.textContent = "drafting concepts\u2026 done";
     logLine("three concepts out of the fire \u2014 pick one below.", "good");
@@ -958,7 +1541,9 @@ function parseCopyRegen(raw, old) {
 }
 async function copyRegenRun() {
   if (!relay || forging || casting || state.picked < 0) return;
+  const idx = state.picked;
   const c = cur();
+  if (!c) return;
   const b = state.brand || {};
   forging = true;
   reflect();
@@ -982,7 +1567,7 @@ async function copyRegenRun() {
     }
     const next = parseCopyRegen(acc, c);
     if (!next) throw new Error("The forge returned malformed copy \u2014 hit Retry; it usually lands clean on the second pass.");
-    state.concepts[state.picked] = next;
+    if (state.concepts[idx]) state.concepts[idx] = next;
     save();
     liveLine.textContent = "redrafting copy\u2026 done";
     logLine("fresh copy on the bench \u2014 same concept, same creative.", "good");
@@ -1008,6 +1593,7 @@ $("sample").addEventListener("click", () => {
   state.images = {};
   state.sample = true;
   state.source = "url";
+  resetExpanded();
   save();
   hideError();
   clearLog();
@@ -1024,47 +1610,116 @@ function renderBrandline() {
   const mount = $("brandline");
   mount.textContent = "";
   if (!b) return;
-  mount.append(el("b", null, b.name));
+  mount.append(el2("b", null, b.name));
   const meta = [b.product, b.tone].filter(Boolean).join(" \xB7 ");
   if (meta) mount.append(document.createTextNode(" \xB7 " + meta + " "));
   (b.colors || []).forEach((c) => {
-    const sw = el("span", "sw");
+    const sw = el2("span", "sw");
     sw.style.background = c;
     sw.title = c;
     mount.append(sw);
   });
-  if (state.sample) mount.append(el("span", "srcchip sample", "sample"));
-  else if (state.source === "brand") mount.append(el("span", "srcchip", "your lent brand"));
+  if (state.sample) mount.append(el2("span", "srcchip sample", "sample"));
+  else if (state.source === "brand") mount.append(el2("span", "srcchip", "your lent brand"));
+  mountBankOffer(mount);
+}
+function bankDraft() {
+  const b = state.brand;
+  if (!relay || state.sample || state.source !== "url" || !b || !b.name) return null;
+  if (b.name === "The brand") return null;
+  const domain = hostOf(state.url);
+  return {
+    id: slugId(domain || b.name),
+    name: b.name,
+    data: {
+      positioning: b.product || "",
+      voice: b.tone || "",
+      palette: Array.isArray(b.colors) ? b.colors : [],
+      products: [],
+      ...domain ? { domain } : {},
+      source: { kind: "site", url: state.url }
+    }
+  };
+}
+function mountBankOffer(mount) {
+  const draft = bankDraft();
+  if (!draft) return;
+  mountBankIt(mount, {
+    relay,
+    kind: "brand",
+    draft,
+    contexts: libraryMetas,
+    onPublished: (meta) => {
+      libraryMetas = libraryMetas.filter((m) => m.id !== meta.id).concat(meta);
+      logLine(`\u201C${meta.name}\u201D banked \u2014 every wrapp can borrow it now instead of re-reading the site.`, "good");
+    }
+  });
+}
+var expanded = /* @__PURE__ */ new Set();
+function resetExpanded() {
+  expanded.clear();
+}
+function toggleCard(i) {
+  if (expanded.has(i)) expanded.delete(i);
+  else expanded.add(i);
+  renderConcepts();
 }
 function renderConcepts() {
   renderBrandline();
   const mount = $("cards");
   mount.textContent = "";
   state.concepts.forEach((c, i) => {
-    const card = el("button", "card" + (i === state.picked ? " picked" : ""));
-    card.type = "button";
-    const top = el("div", "cardtop");
-    top.append(el("span", "anglechip", c.angle));
-    if (c.recommended) top.append(el("span", "recflag", "RECOMMENDED"));
-    const prev = el("div", "copyprev");
-    const flat = c.primaryText.replace(/\s+/g, " ").trim();
-    prev.textContent = flat.slice(0, 150) + (flat.length > 150 ? "\u2026" : "");
-    const foot = el("div", "cardfoot");
-    foot.append(el("span", "fh", c.headline), el("span", "fc", c.cta + " \u2192"));
-    card.append(
-      top,
-      el("div", "hook", c.hook),
-      prev,
-      foot,
-      el("div", "picktag", i === state.picked ? "SELECTED" : "PICK THIS CONCEPT")
-    );
-    card.addEventListener("click", () => pick(i));
+    const open = expanded.has(i);
+    const isPicked = i === state.picked;
+    const card = el2("div", "card" + (isPicked ? " picked" : "") + (open ? " open" : ""));
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-expanded", open ? "true" : "false");
+    card.tabIndex = 0;
+    const top = el2("div", "cardtop");
+    top.append(el2("span", "anglechip", c.angle));
+    if (c.recommended) top.append(el2("span", "recflag", "RECOMMENDED"));
+    const prev = el2("div", "copyprev" + (open ? " full" : ""));
+    if (open) {
+      prev.textContent = c.primaryText;
+    } else {
+      const flat = c.primaryText.replace(/\s+/g, " ").trim();
+      prev.textContent = flat.slice(0, 150) + (flat.length > 150 ? "\u2026" : "");
+    }
+    const foot = el2("div", "cardfoot");
+    foot.append(el2("span", "fh", c.headline), el2("span", "fc", c.cta + " \u2192"));
+    card.append(top, el2("div", "hook", c.hook), prev, foot);
+    if (open) {
+      if (c.description) card.append(el2("div", "carddesc", c.description));
+      if (!isPicked) {
+        const act = el2("button", "castbtn", "Cast this creative");
+        act.type = "button";
+        act.addEventListener("click", (e) => {
+          e.stopPropagation();
+          pick(i);
+        });
+        card.append(act);
+        card.append(el2("div", "castnote", state.picked >= 0 ? "renders on your Claude \u2014 replaces the creative in the studio below" : "renders on your Claude \u2014 the only step here that spends anything"));
+      }
+    }
+    card.append(el2("div", "picktag", isPicked ? "SELECTED" : open ? "CLICK TO COLLAPSE" : "CLICK TO READ IN FULL"));
+    card.addEventListener("click", (e) => {
+      if (!e.target.closest(".castbtn")) toggleCard(i);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.target !== card) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleCard(i);
+      }
+    });
     mount.append(card);
   });
 }
 function pick(i) {
+  if (forging || casting) return;
   state.picked = i;
   state.images = {};
+  expanded.add(i);
   save();
   renderConcepts();
   renderStudio();
@@ -1139,6 +1794,7 @@ function castLineFor(name) {
 async function castRun(aspect) {
   if (!relay || casting || forging || state.picked < 0) return;
   const c = cur();
+  if (!c) return;
   const b = state.brand || {};
   casting = true;
   reflect();
